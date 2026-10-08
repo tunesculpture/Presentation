@@ -1,23 +1,411 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Presentation Player</title>
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Presentation Player</title>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.min.mjs" type="module"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pptxviewjs@1.1.9/dist/PptxViewJS.min.js"></script>
-<style>*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:#05070c;color:#fff;font-family:system-ui,sans-serif;overflow:hidden}.join{height:100%;display:grid;place-items:center}.card{width:min(430px,92vw);padding:28px;background:#101522;border:1px solid #ffffff18;border-radius:24px}.card h1{margin:0 0 8px}.muted{color:#9ca7bb}input,button{width:100%;padding:14px;margin-top:10px;border-radius:12px;border:1px solid #ffffff18;background:#171d2a;color:#fff;font-size:16px}button{background:#fff;color:#080a10;font-weight:700}.err{color:#ff8d8d;margin-top:10px;min-height:20px}.stage{display:none;width:100%;height:100%;position:relative}.ppt{width:100%;height:100%;display:grid;place-items:center}.ppt canvas{max-width:100%;max-height:100%;width:auto;height:auto}.pdf canvas{max-width:100%;max-height:100%;object-fit:contain}.count{position:fixed;right:16px;bottom:12px;color:#7f8aa0;font-size:13px;z-index:5;background:#0007;padding:5px 8px;border-radius:8px}</style></head>
-<body><div class="join" id="join"><div class="card"><h1>Presentation</h1><div class="muted">Enter the code and password shown in your phone.</div><input id="code" placeholder="Presentation code"><input id="pw" placeholder="Password" type="password"><button onclick="start()">Start presentation</button><div class="err" id="err"></div></div></div>
-<div class="stage" id="stage"><div id="viewer" class="ppt"></div><div class="count" id="count"></div></div>
+
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;background:#05070c;color:#fff;font-family:system-ui,sans-serif;overflow:hidden}
+.join{height:100%;display:grid;place-items:center}
+.card{width:min(440px,92vw);padding:28px;background:#101522;border:1px solid #ffffff18;border-radius:24px}
+.card h1{margin:0 0 8px}
+.muted{color:#9ca7bb}
+input,button{width:100%;padding:14px;margin-top:10px;border-radius:12px;border:1px solid #ffffff18;background:#171d2a;color:#fff;font-size:16px}
+button{background:#fff;color:#080a10;font-weight:700;cursor:pointer}
+button:disabled{opacity:.55}
+.err{color:#ff8d8d;margin-top:12px;min-height:22px}
+.ok{color:#8ff0b0;margin-top:12px}
+.stage{display:none;width:100%;height:100%;position:relative;background:#000}
+.viewer{width:100%;height:100%;display:grid;place-items:center}
+.viewer canvas{max-width:100%;max-height:100%;width:auto;height:auto;display:block}
+.count{position:fixed;right:16px;bottom:12px;color:#c7cfdf;font-size:13px;z-index:5;background:#0009;padding:6px 9px;border-radius:8px}
+.loading{font-size:18px;color:#c7cfdf;text-align:center;padding:20px}
+</style>
+</head>
+
+<body>
+
+<div class="join" id="join">
+  <div class="card">
+    <h1>Presentation</h1>
+    <div class="muted">Enter the code and password shown in your phone.</div>
+
+    <input id="codeInput" placeholder="Presentation code" autocomplete="off">
+    <input id="passwordInput" placeholder="Password" type="password" autocomplete="off">
+
+    <button id="startBtn">Start presentation</button>
+
+    <div class="err" id="err"></div>
+  </div>
+</div>
+
+<div class="stage" id="stage">
+  <div id="viewer" class="viewer">
+    <div class="loading">Loading presentation…</div>
+  </div>
+  <div class="count" id="count"></div>
+</div>
+
 <script>
-const URL="https://fcedxenugshdbkummqwh.supabase.co",KEY="sb_publishable_1iAmtkndyDOzHHwZgYglTg_5CnffByo",db=supabase.createClient(URL,KEY);
-let p,channel,pptViewer,pdfDoc,pdfCanvases=[],pdfRendering=false;
-async function start(){const c=code.value.trim().toUpperCase(),pw=pwEl().trim();const {data,error}=await db.from('presentations').select('*').eq('code',c).eq('password',pw).maybeSingle();if(error||!data){err.textContent="Invalid code or password.";return}p=data;join.style.display='none';stage.style.display='block';document.documentElement.requestFullscreen?.().catch(()=>{});await loadFile();channel=db.channel("presentation-"+p.id).on("postgres_changes",{event:"UPDATE",schema:"public",table:"presentations",filter:"id=eq."+p.id},async x=>{p=x.new;await showSlide()}).subscribe()}
-function pwEl(){return document.getElementById("pw").value}
-async function loadFile(){viewer.innerHTML="";pdfDoc=null;pptViewer=null;pdfCanvases=[];if(!p.file_url){viewer.innerHTML='<div class="muted">This presentation has no uploaded file.</div>';return}if(p.file_type==="pdf"){await loadPdf(p.file_url)}else if(p.file_type==="pptx"){const canvas=document.createElement("canvas");canvas.width=1600;canvas.height=900;viewer.appendChild(canvas);pptViewer=new PptxViewJS.PPTXViewer({canvas});await pptViewer.loadFile(p.file_url);await pptViewer.goToSlide(p.current_slide||0);await pptViewer.render()}else{viewer.innerHTML='<div class="muted">Unsupported file type.</div>'}updateCount()}
-async function loadPdf(url){const lib=await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.min.mjs");lib.GlobalWorkerOptions.workerSrc="https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.worker.min.mjs";pdfDoc=await lib.getDocument(url).promise;await showPdf(p.current_slide||0,lib)}
-async function showPdf(i,lib){if(!pdfDoc)return;const page=await pdfDoc.getPage(i+1),vp=page.getViewport({scale:1});const maxW=innerWidth,maxH=innerHeight;const scale=Math.min(maxW/vp.width,maxH/vp.height);const v=page.getViewport({scale});viewer.innerHTML="";const c=document.createElement("canvas");c.width=v.width;c.height=v.height;viewer.appendChild(c);await page.render({canvasContext:c.getContext("2d"),viewport:v}).promise;updateCount()}
-async function showSlide(){if(p.file_type==="pptx"&&pptViewer){await pptViewer.goToSlide(p.current_slide);await pptViewer.render();updateCount()}else if(p.file_type==="pdf"){const lib=await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.min.mjs");await showPdf(p.current_slide,lib)}}
-function updateCount(){const total=p.file_type==="pdf"?(pdfDoc?.numPages||0):(pptViewer?.getSlideCount?.()||"?");count.textContent=`${(p.current_slide||0)+1} / ${total}`}
-window.addEventListener("resize",()=>{if(p?.file_type==="pdf")showSlide()});
-document.addEventListener("keydown",async e=>{if(!p)return;if(e.key==="ArrowRight"||e.key==="PageDown")await move(1);if(e.key==="ArrowLeft"||e.key==="PageUp")await move(-1)});
-async function move(d){const total=p.file_type==="pdf"?pdfDoc?.numPages:pptViewer?.getSlideCount?.();if(!total)return;const n=Math.max(0,Math.min(total-1,(p.current_slide||0)+d));await db.from("presentations").update({current_slide:n}).eq("id",p.id)}
-</script></body></html>
+const SUPABASE_URL="https://fcedxenugshdbkummqwh.supabase.co";
+const SUPABASE_KEY="sb_publishable_1iAmtkndyDOzHHwZgYglTg_5CnffByo";
+const db=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+
+const joinEl=document.getElementById("join");
+const stageEl=document.getElementById("stage");
+const viewerEl=document.getElementById("viewer");
+const countEl=document.getElementById("count");
+const errorEl=document.getElementById("err");
+const codeEl=document.getElementById("codeInput");
+const passwordEl=document.getElementById("passwordInput");
+const startBtn=document.getElementById("startBtn");
+
+let presentation=null;
+let channel=null;
+let pptViewer=null;
+let pdfDoc=null;
+let pdfLib=null;
+let loadingFile=false;
+
+startBtn.addEventListener("click",start);
+
+async function start(){
+  if(loadingFile)return;
+
+  const code=codeEl.value.trim().toUpperCase();
+  const password=passwordEl.value.trim();
+
+  errorEl.className="err";
+  errorEl.textContent="";
+
+  if(!code || !password){
+    errorEl.textContent="Please enter both code and password.";
+    return;
+  }
+
+  try{
+    loadingFile=true;
+    startBtn.disabled=true;
+    startBtn.textContent="Connecting…";
+    errorEl.className="ok";
+    errorEl.textContent="Checking presentation…";
+
+    const result=await db
+      .from("presentations")
+      .select("*")
+      .eq("code",code)
+      .eq("password",password)
+      .maybeSingle();
+
+    if(result.error){
+      throw new Error("Database error: "+result.error.message);
+    }
+
+    if(!result.data){
+      throw new Error("Invalid presentation code or password.");
+    }
+
+    presentation=result.data;
+
+    if(!presentation.file_url){
+      throw new Error("This presentation has no uploaded file.");
+    }
+
+    errorEl.className="ok";
+    errorEl.textContent="Presentation found. Loading file…";
+
+    viewerEl.innerHTML='<div class="loading">Loading presentation file…</div>';
+
+    /*
+      IMPORTANT:
+      Keep the join screen visible until the file actually loads.
+      This makes errors visible instead of showing a blank screen.
+    */
+    await loadFile();
+
+    joinEl.style.display="none";
+    stageEl.style.display="block";
+
+    if(document.documentElement.requestFullscreen){
+      document.documentElement.requestFullscreen().catch(()=>{});
+    }
+
+    startRealtime();
+
+  }catch(e){
+    console.error("PRESENTATION START ERROR:",e);
+
+    joinEl.style.display="grid";
+    stageEl.style.display="none";
+
+    errorEl.className="err";
+    errorEl.textContent=e && e.message
+      ? e.message
+      : "Could not start presentation.";
+
+  }finally{
+    loadingFile=false;
+    startBtn.disabled=false;
+    startBtn.textContent="Start presentation";
+  }
+}
+
+async function loadFile(){
+  const type=(presentation.file_type||"").toLowerCase();
+
+  if(type==="pdf"){
+    await loadPdf(presentation.file_url);
+    return;
+  }
+
+  if(type==="pptx"){
+    await loadPptx(presentation.file_url);
+    return;
+  }
+
+  throw new Error(
+    "Unsupported file type: "+(presentation.file_type||"unknown")+
+    ". Please upload a PDF or PPTX."
+  );
+}
+
+async function loadPptx(url){
+  if(!window.PptxViewJS){
+    throw new Error("PowerPoint viewer library did not load. Check the internet connection on the classroom computer.");
+  }
+
+  viewerEl.innerHTML="";
+
+  const canvas=document.createElement("canvas");
+  canvas.width=1600;
+  canvas.height=900;
+  viewerEl.appendChild(canvas);
+
+  try{
+    pptViewer=new PptxViewJS.PPTXViewer({
+      canvas:canvas,
+      autoExposeGlobals:true
+    });
+
+    /*
+      PptxViewJS supports loading a PPTX directly from a URL.
+      Supabase Storage is public, so the browser can retrieve it.
+    */
+    await pptViewer.loadFile(url);
+
+    const total=typeof pptViewer.getSlideCount==="function"
+      ? pptViewer.getSlideCount()
+      : 0;
+
+    if(!total){
+      throw new Error("The PPTX was downloaded but no slides were detected.");
+    }
+
+    const initial=Math.max(
+      0,
+      Math.min(total-1,Number(presentation.current_slide)||0)
+    );
+
+    await pptViewer.goToSlide(initial);
+    await pptViewer.render();
+
+    presentation.current_slide=initial;
+    updateCount(total);
+
+  }catch(e){
+    throw new Error(
+      "Could not render this PPTX file. "+(e?.message||String(e))
+    );
+  }
+}
+
+async function loadPdf(url){
+  try{
+    pdfLib=await import(
+      "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.min.mjs"
+    );
+
+    pdfLib.GlobalWorkerOptions.workerSrc=
+      "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.worker.min.mjs";
+
+    pdfDoc=await pdfLib.getDocument({url:url}).promise;
+
+    if(!pdfDoc.numPages){
+      throw new Error("PDF contains no pages.");
+    }
+
+    await renderPdfPage(Number(presentation.current_slide)||0);
+
+  }catch(e){
+    throw new Error(
+      "Could not load this PDF. "+(e?.message||String(e))
+    );
+  }
+}
+
+async function renderPdfPage(index){
+  if(!pdfDoc)return;
+
+  const safeIndex=Math.max(
+    0,
+    Math.min(pdfDoc.numPages-1,Number(index)||0)
+  );
+
+  const page=await pdfDoc.getPage(safeIndex+1);
+
+  const base=page.getViewport({scale:1});
+  const maxW=window.innerWidth;
+  const maxH=window.innerHeight;
+
+  const scale=Math.min(
+    maxW/base.width,
+    maxH/base.height
+  );
+
+  const viewport=page.getViewport({scale});
+
+  viewerEl.innerHTML="";
+
+  const canvas=document.createElement("canvas");
+  canvas.width=Math.floor(viewport.width);
+  canvas.height=Math.floor(viewport.height);
+
+  viewerEl.appendChild(canvas);
+
+  await page.render({
+    canvasContext:canvas.getContext("2d"),
+    viewport:viewport
+  }).promise;
+
+  presentation.current_slide=safeIndex;
+  updateCount(pdfDoc.numPages);
+}
+
+function updateCount(total){
+  const current=(Number(presentation?.current_slide)||0)+1;
+  countEl.textContent=current+" / "+(total||"?");
+}
+
+function startRealtime(){
+  if(channel){
+    db.removeChannel(channel).catch(()=>{});
+    channel=null;
+  }
+
+  channel=db
+    .channel("presentation-"+presentation.id)
+    .on(
+      "postgres_changes",
+      {
+        event:"UPDATE",
+        schema:"public",
+        table:"presentations",
+        filter:"id=eq."+presentation.id
+      },
+      async payload=>{
+        try{
+          presentation=payload.new;
+          await showCurrentSlide();
+        }catch(e){
+          console.error("REALTIME SLIDE ERROR:",e);
+        }
+      }
+    )
+    .subscribe();
+}
+
+async function showCurrentSlide(){
+  const index=Number(presentation.current_slide)||0;
+
+  if(presentation.file_type==="pdf"){
+    await renderPdfPage(index);
+    return;
+  }
+
+  if(presentation.file_type==="pptx" && pptViewer){
+    const total=pptViewer.getSlideCount();
+
+    const safeIndex=Math.max(
+      0,
+      Math.min(total-1,index)
+    );
+
+    presentation.current_slide=safeIndex;
+
+    await pptViewer.goToSlide(safeIndex);
+    await pptViewer.render();
+
+    updateCount(total);
+  }
+}
+
+async function move(direction){
+  if(!presentation)return;
+
+  let total=0;
+
+  if(presentation.file_type==="pdf"){
+    total=pdfDoc?.numPages||0;
+  }else if(presentation.file_type==="pptx"){
+    total=pptViewer?.getSlideCount?.()||0;
+  }
+
+  if(!total)return;
+
+  const current=Number(presentation.current_slide)||0;
+  const next=Math.max(
+    0,
+    Math.min(total-1,current+direction)
+  );
+
+  if(next===current)return;
+
+  const result=await db
+    .from("presentations")
+    .update({current_slide:next})
+    .eq("id",presentation.id);
+
+  if(result.error){
+    console.error("Slide update failed:",result.error);
+  }
+}
+
+document.addEventListener("keydown",async e=>{
+  if(!presentation)return;
+
+  if(e.key==="ArrowRight" || e.key==="PageDown"){
+    e.preventDefault();
+    await move(1);
+  }
+
+  if(e.key==="ArrowLeft" || e.key==="PageUp"){
+    e.preventDefault();
+    await move(-1);
+  }
+
+  if(e.key==="Home"){
+    e.preventDefault();
+
+    await db
+      .from("presentations")
+      .update({current_slide:0})
+      .eq("id",presentation.id);
+  }
+});
+
+window.addEventListener("resize",()=>{
+  if(presentation?.file_type==="pdf"){
+    renderPdfPage(presentation.current_slide||0).catch(console.error);
+  }
+});
+</script>
+
+</body>
+</html>
