@@ -195,10 +195,30 @@ async function loadPptx(url){
     });
 
     /*
-      PptxViewJS supports loading a PPTX directly from a URL.
-      Supabase Storage is public, so the browser can retrieve it.
+      PptxViewJS expects a File, ArrayBuffer, or Uint8Array.
+      Passing the Supabase URL directly causes:
+      "Input must be File, ArrayBuffer, or Uint8Array".
+      Fetch the public Supabase file first, then pass its bytes.
     */
-    await pptViewer.loadFile(url);
+    const response = await fetch(url, {
+      method: "GET",
+      cache: "no-store"
+    });
+
+    if(!response.ok){
+      throw new Error(
+        "Could not download PPTX from Supabase Storage (HTTP " +
+        response.status + ")."
+      );
+    }
+
+    const pptxBytes = await response.arrayBuffer();
+
+    if(!pptxBytes || pptxBytes.byteLength === 0){
+      throw new Error("The downloaded PPTX file is empty.");
+    }
+
+    await pptViewer.loadFile(pptxBytes);
 
     const total=typeof pptViewer.getSlideCount==="function"
       ? pptViewer.getSlideCount()
@@ -220,9 +240,13 @@ async function loadPptx(url){
     updateCount(total);
 
   }catch(e){
-    throw new Error(
-      "Could not render this PPTX file. "+(e?.message||String(e))
-    );
+    const message = e?.message || String(e);
+    if(message.includes("Failed to fetch")){
+      throw new Error(
+        "Could not download the PPTX from Supabase. Check the classroom computer's internet connection and Supabase Storage access."
+      );
+    }
+    throw new Error("Could not render this PPTX file. "+message);
   }
 }
 
